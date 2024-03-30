@@ -351,7 +351,8 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           autoDelete: false,
           player: msg.playerid,
           who: who,
-          source: 'AddCustomTurn'
+          source: 'AddCustomTurn',
+          counter: 0
         };
         let idx = 0;
 
