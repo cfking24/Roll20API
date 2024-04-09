@@ -53,7 +53,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
 
   const checkFormulaOnTurn = (prevTo) => {
     let to=getTurnArray();
-    if(to.length && to[0].id==='-1' && prevTo[0].custom !== to.custom){
+    if(to.length && to[0].id==='-1' && prevTo[0].custom !== to.custom && to[0].counter % to[0].numCycles == 0){
       sendChat('',`[[${to[0].pr}+(${to[0].formula||0})]]`,(r)=>{
         to[0].pr=r[0].inlinerolls[0].results.total;
         setTurnArray(to);
@@ -125,10 +125,21 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
       to=getTurnArray();
       p = getTurnArrayFromPrev(p);
     }
-    if(to.length && to[0].id==='-1' && to[0].custom !== p[0].custom && isDeleteCondition(to[0])){
-      setTurnArray(to.slice(1));
-      outputEvent('delete',to[0]);
-    }
+
+    if(to.length && to[0].id==='-1') {
+      to[0].counter = to[0].counter + 1;
+
+      let counterVal = to[0].counter;
+      let modVal = to[0].numCycles;
+      sendChat('API', `/w gm The name is ${to[0].custom}`);
+      sendChat('API', `/w gm The value of the counter is ${counterVal}`);
+      sendChat('API', `/w gm The value of the number of cycles is ${modVal}`);
+
+      if(to[0].custom !== p[0].custom && isDeleteCondition(to[0])) {
+        setTurnArray(to.slice(1));
+        outputEvent('delete',to[0]);
+      } 
+    }  
   };
 
   const processInlinerolls = (msg) => {
@@ -352,7 +363,8 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           player: msg.playerid,
           who: who,
           source: 'AddCustomTurn',
-          counter: 0
+          counter: 0,
+          numCycles: 1
         };
         let idx = 0;
 
@@ -399,6 +411,10 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
 
               entry.autoDelete = true;
               entry.deleteCondition = { op: 'GT', val: parseInt(parts[1])};
+              break;
+
+            case 'slow-down':
+              entry.numCycles = parseInt(parts[1])||0;
               break;
 
             default: {
