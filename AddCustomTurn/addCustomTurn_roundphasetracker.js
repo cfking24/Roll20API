@@ -15,6 +15,8 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
   const DEFAULT_NAME = '[Custom Turn]';
 
   const PHASE_NUM = 3;
+  const HIDDEN_TRACKER_NAME = '[ACT Hidden Spell Tracker]';
+  const HIDDEN_TRACKER_IMG = 'https://s3.amazonaws.com/files.d20.io/images/129234422/z67Jv24VGt1P4oIbC0W8rw/thumb.png?1588254230';
 
   const checkInstall = () =>  {
     log(`-=> ${scriptName} v${version} <=-  [${new Date(lastUpdate*1000)}]`);
@@ -37,6 +39,9 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           break;
       }
     }
+
+    state[scriptName].hiddenTrackerTokenId = state[scriptName].hiddenTrackerTokenId || null;
+    state.ActionMarkerTokens = Array.isArray(state.ActionMarkerTokens) ? state.ActionMarkerTokens : [];
   };
 
   /* eslint-disable no-unused-vars */
@@ -47,15 +52,111 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
   const addCustomTurn = (custom, pr) => setTurnArray([...getTurnArray(), {id:"-1",custom,pr}]);
   const removeTokenTurn = (tid) => setTurnArray(getTurnArray().filter( (to) => to.id !== tid));
   const removeCustomTurn = (custom) => setTurnArray(getTurnArray().filter( (to) => to.custom !== custom));
-  const clearTurnOrder = () => Campaign().set({turnorder:'[]'});
+  const clearTurnOrder = () => {
+    Campaign().set({turnorder:'[]'});
+    cleanupHiddenTrackerToken([]);
+  };
   const sorter_asc = (a, b) => a.pr - b.pr;
   const sorter_desc = (a, b) => b.pr - a.pr;
   const sortTurnOrder = (sortBy = sorter_desc) => Campaign().set({turnorder: JSON.stringify(getTurnArray().sort(sortBy))});
   /* eslint-enable no-unused-vars */
 
+  const isACTEntry = (entry) => entry && entry.source === scriptName;
+  const isPlainCustomEntry = (entry) => isACTEntry(entry) && entry.type === undefined;
+  const isHiddenACTEntry = (entry) => isACTEntry(entry) && entry.hidden === true;
+
+  const getInitiativePageId = () => Campaign().get('initiativepage') || Campaign().get('playerpageid');
+
+  const getStoredHiddenTrackerToken = () => {
+    const tokenId = state[scriptName].hiddenTrackerTokenId;
+    if(!tokenId) {
+      return null;
+    }
+
+    const token = getObj('graphic', tokenId);
+    if(!token) {
+      state[scriptName].hiddenTrackerTokenId = null;
+    }
+    return token;
+  };
+
+  const findHiddenTrackerToken = (pageId) => findObjs({
+    _type: 'graphic',
+    _pageid: pageId,
+    layer: 'gmlayer',
+    name: HIDDEN_TRACKER_NAME
+  })[0] || null;
+
+  // Hidden turns all point at one GM-layer token so the tracker entry is attached to an object players cannot see.
+  const getOrCreateHiddenTrackerToken = () => {
+    const storedToken = getStoredHiddenTrackerToken();
+    if(storedToken) {
+      return storedToken;
+    }
+
+    const pageId = getInitiativePageId();
+    const existingToken = findHiddenTrackerToken(pageId);
+    if(existingToken) {
+      state[scriptName].hiddenTrackerTokenId = existingToken.id;
+      return existingToken;
+    }
+
+    const page = getObj('page', pageId);
+    if(!page) {
+      log(`${scriptName}: unable to create hidden tracker token because the initiative page could not be found.`);
+      return null;
+    }
+
+    const token = createObj('graphic', {
+      _pageid: pageId,
+      imgsrc: HIDDEN_TRACKER_IMG,
+      name: HIDDEN_TRACKER_NAME,
+      layer: 'gmlayer',
+      left: (page.get('width') * 70) - 35,
+      top: (page.get('height') * 70) - 35,
+      width: 70,
+      height: 70,
+      showname: false,
+      showplayers_name: false,
+      showplayers_bar1: false,
+      showplayers_bar2: false,
+      showplayers_bar3: false,
+      light_hassight: false,
+      playersedit_name: false,
+      playersedit_bar1: false,
+      playersedit_bar2: false,
+      playersedit_bar3: false
+    });
+
+    if(token) {
+      state[scriptName].hiddenTrackerTokenId = token.id;
+      return token;
+    }
+
+    log(`${scriptName}: createObj() failed while creating the hidden tracker token.`);
+    return null;
+  };
+
+  const removeHiddenTrackerToken = () => {
+    const token = getStoredHiddenTrackerToken();
+    if(token) {
+      token.remove();
+    }
+    state[scriptName].hiddenTrackerTokenId = null;
+  };
+
+  // Delete the GM-layer tracker token once no hidden AddCustomTurn entries remain in the tracker.
+  const cleanupHiddenTrackerToken = (turnOrder = getTurnArray()) => {
+    if(turnOrder.some(isHiddenACTEntry)) {
+      return;
+    }
+    removeHiddenTrackerToken();
+  };
+
   const checkFormulaOnTurn = (prevTo) => {
     let to=getTurnArray();
-    if(to.length && to[0].id==='-1' && prevTo[0].custom !== to.custom && to[0].counter % to[0].numCycles == 0){
+    const prevTop = (Array.isArray(prevTo) && prevTo.length) ? prevTo[0] : null;
+    if(to.length && isPlainCustomEntry(to[0]) && (!prevTop || prevTop.custom !== to[0].custom) && to[0].counter % to[0].numCycles == 0){
       sendChat('',`[[${to[0].pr}+(${to[0].formula||0})]]`,(r)=>{
         to[0].pr=r[0].inlinerolls[0].results.total;
         setTurnArray(to);
@@ -86,6 +187,14 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
   const outputEvent = (event, entry, who) =>{
     switch(event){
       case 'expire': {
+          if(!playerIsGM(entry.player)){
+            sendChat('ACT',`/w gm <div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${entry.custom}</b> expired and was removed.</div></div>`);
+          }
+          sendChat('ACT',`/w "${who||entry.who}" <div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${entry.custom}</b> expired and was removed.</div></div>`);
+        }
+        break;
+
+      case 'delete': {
           if(!playerIsGM(entry.player)){
             sendChat('ACT',`/w gm <div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${entry.custom}</b> expired and was removed.</div></div>`);
           }
@@ -141,22 +250,28 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
       p = getTurnArrayFromPrev(p);
     }
 
+    const prevTop = p[0];
+
     // When a phase tracker is created, remove markers
     if(to.some(entry => entry.type === "phase") && !p.some(entry => entry.type === "phase")){
       removeMarkers();
     }
 
     // Remove expired plain custom turns when they reach their configured delete condition.
-    if(to.length && to[0].id==='-1' && to[0].type === undefined) {
-      if(to[0].custom !== p[0].custom && isDeleteCondition(to[0])) {
-      setTurnArray(to.slice(1));
-      outputEvent('delete',to[0]);
-      } 
+    if(to.length && isPlainCustomEntry(to[0])) {
+      if((!prevTop || to[0].custom !== prevTop.custom) && isDeleteCondition(to[0])) {
+        const expiredEntry = to[0];
+        to = to.slice(1);
+        setTurnArray(to);
+        outputEvent('delete',expiredEntry);
+        cleanupHiddenTrackerToken(to);
+        return;
+      }
     }
     
     // Advance the phase tracker, roll over to the next round, and clear action markers on a new round.
     if(to.length && to[0].type === "round") {
-      if (to[1].type === "phase") { // If the next entry is a phase tracker, advance it and check for phase rollover.
+      if (to[1] && to[1].type === "phase") { // If the next entry is a phase tracker, advance it and check for phase rollover.
         to[1].pr++
         if(to[1].pr == PHASE_NUM+1){
           to[1].pr = 1;
@@ -185,10 +300,12 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
         if(to[0].counter % PHASE_NUM == 0){
             to[0].pr--
             if(to[0].pr == 0){
-              outputEvent('delete',to[0]);
-              sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${to[0].custom}</b> expired and was removed.</div></div>`);
+              const expiredEntry = to[0];
+              outputEvent('delete',expiredEntry);
+              sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${expiredEntry.custom}</b> expired and was removed.</div></div>`);
               to = to.slice(1);
               setTurnArray(to);
+              cleanupHiddenTrackerToken(to);
               return;
               }
         }
@@ -202,10 +319,12 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
       else { // If the phase tracker isn't present, just count turns.
         to[0].pr--
         if(to[0].pr == 0){
-          outputEvent('delete',to[0]);
-          sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${to[0].custom}</b> expired and was removed.</div></div>`);
+          const expiredEntry = to[0];
+          outputEvent('delete',expiredEntry);
+          sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${expiredEntry.custom}</b> expired and was removed.</div></div>`);
           to = to.slice(1);
           setTurnArray(to);
+          cleanupHiddenTrackerToken(to);
           return;
         }
       }
@@ -216,6 +335,8 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
     if(p.some(entry => entry.type === "phase") && !to.some(entry => entry.type === "phase")){
       removeMarkers();
     }
+
+    cleanupHiddenTrackerToken(to);
   };
 
   const processInlinerolls = (msg) => {
@@ -319,6 +440,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
               `--delete-eq ${_h.required('number')}`,
               `--delete-ge ${_h.required('number')}`,
               `--delete-gt ${_h.required('number')}`,
+              `--hidden`,
               `--after`,
               `--index ${_h.required('number')}`,
               `--help`
@@ -339,6 +461,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
             `${_h.bold(`--delete-eq ${_h.required('number')}`)} -- deletes the custom turn when its value is equal to ${_h.code(_h.required('number'))}.`,
             `${_h.bold(`--delete-ge ${_h.required('number')}`)} -- deletes the custom turn when its value is greater than or equal to ${_h.code(_h.required('number'))}.`,
             `${_h.bold(`--delete-gt ${_h.required('number')}`)} -- deletes the custom turn when its value is greater than ${_h.code(_h.required('number'))}.`,
+            `${_h.bold(`--hidden`)} -- attach the turn to a dedicated GM-layer token so players do not see the token associated with the turn.`,
             `${_h.bold(`--after`)} -- adds the custom turn after the current turn.  Shorthand for ${_h.code('--index 1')}.`,
             `${_h.bold(`--index ${_h.required('number')}`)} -- adds the custom turn after the entry at index ${_h.code(_h.required('number'))}.`,
             `${_h.bold('--help')} -- Shows the Help screen.`
@@ -387,6 +510,11 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
             _h.pre('!act -1 10 --Bless [Bob the Slayer] --delete-le 0'),
             _h.pre('!act -1 10 --delete-on-zero --Bless [Bob the Slayer]'),
             _h.pre('!act -1 10 --delete-le 0 --Bless [Bob the Slayer]')
+          ),
+
+          _h.paragraph(`Add a hidden spell tracker tied to the GM-layer token:`),
+          _h.inset(
+            _h.pre('!act 0 5 --Hidden Ward --spell-tracker --hidden')
           ),
 
           _h.paragraph(`Supports multi-line syntax by wrapping with ${_h.code('{{')} and ${_h.code('}}')}:`),
@@ -439,6 +567,9 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           player: msg.playerid,
           who: who,
           source: 'AddCustomTurn',
+          hidden: false,
+          counter: 0,
+          numCycles: 1
         };
         let idx = 0;
 
@@ -487,6 +618,10 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
               entry.deleteCondition = { op: 'GT', val: parseInt(parts[1])};
               break;
 
+            case 'hidden':
+              entry.hidden = true;
+              break;
+
             case 'round-tracker':
                 entry.type = "round";
               break;
@@ -512,6 +647,15 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
         });
 
         if(DEFAULT_NAME !== entry.custom){
+          if(entry.hidden) {
+            const hiddenTrackerToken = getOrCreateHiddenTrackerToken();
+            if(!hiddenTrackerToken) {
+              sendChat('ACT', `/w gm ${scriptName} could not create the hidden tracker token. Hidden turn was not added.`);
+              return;
+            }
+            entry.id = hiddenTrackerToken.id;
+          }
+
           let to=getTurnArray();
           setTurnArray([...to.slice(0,idx),entry,...to.slice(idx)]);
 
@@ -542,6 +686,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
             to = [...to.slice(0,idx),...to.slice(idx+1)];
             setTurnArray(to);
             outputEvent('remove',e);
+            cleanupHiddenTrackerToken(to);
           }
         } else {
           showHelp(who);
