@@ -16,8 +16,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
 
   const PHASE_NUM = 3;
   const HIDDEN_TRACKER_NAME = '[ACT Hidden Spell Tracker]';
-  const HIDDEN_TRACKER_IMG = 'https://s3.amazonaws.com/files.d20.io/images/129234422/z67Jv24VGt1P4oIbC0W8rw/thumb.png?1588254230';
-
+  const HIDDEN_TRACKER_IMG = 'https://files.d20.io/images/490133006/AXnih6qrMzeScAz3Nnhi2w/thumb.png?1781068992';
   const checkInstall = () =>  {
     log(`-=> ${scriptName} v${version} <=-  [${new Date(lastUpdate*1000)}]`);
 
