@@ -152,12 +152,19 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
     removeHiddenTrackerToken();
   };
 
+  // Use Roll20's inline roll engine so formulas can stay general instead of being limited to hard-coded increments.
+  const applyFormulaToEntry = (entry, done) => {
+    sendChat('', `[[${entry.pr}+(${entry.formula||0})]]`, (r) => {
+      entry.pr = r[0].inlinerolls[0].results.total;
+      done(entry);
+    });
+  };
+
   const checkFormulaOnTurn = (prevTo) => {
     let to=getTurnArray();
     const prevTop = (Array.isArray(prevTo) && prevTo.length) ? prevTo[0] : null;
     if(to.length && isPlainCustomEntry(to[0]) && (!prevTop || prevTop.custom !== to[0].custom) && to[0].counter % to[0].numCycles == 0){
-      sendChat('',`[[${to[0].pr}+(${to[0].formula||0})]]`,(r)=>{
-        to[0].pr=r[0].inlinerolls[0].results.total;
+      applyFormulaToEntry(to[0], () => {
         setTurnArray(to);
         handleTurnorderChange(to,prevTo);
       });
@@ -297,16 +304,20 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
     if(to.length && to[0].type === "spell") {
       if (to.some(entry => entry.type === "phase")) { // If the phase tracker is present, use it to count rounds.
         if(to[0].counter % PHASE_NUM == 0){
-            to[0].pr--
-            if(to[0].pr == 0){
-              const expiredEntry = to[0];
-              outputEvent('delete',expiredEntry);
-              sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${expiredEntry.custom}</b> expired and was removed.</div></div>`);
-              to = to.slice(1);
+            applyFormulaToEntry(to[0], (updatedEntry) => {
+              if(parseInt(updatedEntry.pr, 10) <= 0){
+                const expiredEntry = updatedEntry;
+                outputEvent('delete',expiredEntry);
+                sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${expiredEntry.custom}</b> expired and was removed.</div></div>`);
+                to = to.slice(1);
+                setTurnArray(to);
+                cleanupHiddenTrackerToken(to);
+                return;
+              }
               setTurnArray(to);
               cleanupHiddenTrackerToken(to);
-              return;
-              }
+            });
+            return;
         }
         if (!to[0].firstFlag) {
             to[0].counter++
@@ -316,16 +327,20 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
         }
       }
       else { // If the phase tracker isn't present, just count turns.
-        to[0].pr--
-        if(to[0].pr == 0){
-          const expiredEntry = to[0];
-          outputEvent('delete',expiredEntry);
-          sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${expiredEntry.custom}</b> expired and was removed.</div></div>`);
-          to = to.slice(1);
+        applyFormulaToEntry(to[0], (updatedEntry) => {
+          if(parseInt(updatedEntry.pr, 10) <= 0){
+            const expiredEntry = updatedEntry;
+            outputEvent('delete',expiredEntry);
+            sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${expiredEntry.custom}</b> expired and was removed.</div></div>`);
+            to = to.slice(1);
+            setTurnArray(to);
+            cleanupHiddenTrackerToken(to);
+            return;
+          }
           setTurnArray(to);
           cleanupHiddenTrackerToken(to);
-          return;
-        }
+        });
+        return;
       }
       setTurnArray(to);   
     }
@@ -513,7 +528,18 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
 
           _h.paragraph(`Add a hidden spell tracker tied to the GM-layer token:`),
           _h.inset(
-            _h.pre('!act 0 5 --Hidden Ward --spell-tracker --hidden')
+            _h.pre('!act 5 --Hidden Ward --spell-tracker --hidden')
+          ),
+
+          _h.paragraph(`Add a spell tracker that defaults to decreasing by 1 each round:`),
+          _h.inset(
+            _h.pre('!act 8 --Hallucinatory Terrain --spell-tracker --hidden')
+          ),
+
+          _h.paragraph(`Add a spell tracker that changes by a custom amount each round:`),
+          _h.inset(
+            _h.pre('!act -2 10 --Strength --spell-tracker'),
+            _h.pre('!act -2 10 --Strength --spell-tracker --hidden')
           ),
 
           _h.paragraph(`Supports multi-line syntax by wrapping with ${_h.code('{{')} and ${_h.code('}}')}:`),
@@ -553,6 +579,8 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           .split(/\s+--/);
 
         let cmds=args.shift().split(/\s+/);
+        const hasPositionalFormula = !Number.isNaN(parseFloat(cmds[1]));
+        const hasPositionalInitial = !Number.isNaN(parseFloat(cmds[2]));
         let change=parseFloat(cmds[1]);
         change = Number.isNaN(change) ? '+1' : change;
         change = `${/^[+-]\d/.test(change)?'':'+'}${change}`;
@@ -631,6 +659,13 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
               
             case 'spell-tracker':
                 entry.type = "spell";
+                // For spell trackers, a single numeric positional argument is treated as the starting duration.
+                if(hasPositionalFormula && !hasPositionalInitial) {
+                  entry.pr = parseFloat(cmds[1]) || 0;
+                  entry.formula = '-1';
+                } else if(!hasPositionalFormula) {
+                  entry.formula = '-1';
+                }
                 entry.counter = 1;
                 entry.firstFlag = true;
                 break;
