@@ -64,7 +64,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
   const isPlainCustomEntry = (entry) => isACTEntry(entry) && entry.type === undefined;
   const isHiddenACTEntry = (entry) => isACTEntry(entry) && entry.hidden === true;
 
-  const getInitiativePageId = () => Campaign().get('initiativepage') || Campaign().get('playerpageid');
+  const getInitiativePageId = () => Campaign().get('playerpageid');
 
   const getStoredHiddenTrackerToken = () => {
     const tokenId = state[scriptName].hiddenTrackerTokenId;
@@ -94,6 +94,11 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
     }
 
     const pageId = getInitiativePageId();
+
+    log(`initiativepage: ${Campaign().get('initiativepage')}`);
+    log(`playerpageid: ${Campaign().get('playerpageid')}`);
+    log(`resolved pageId: ${pageId}`);
+
     const existingToken = findHiddenTrackerToken(pageId);
     if(existingToken) {
       state[scriptName].hiddenTrackerTokenId = existingToken.id;
@@ -691,7 +696,10 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           }
 
           let to=getTurnArray();
+          log(JSON.stringify(entry));
+          log(JSON.stringify([...to.slice(0,idx),entry,...to.slice(idx)]));
           setTurnArray([...to.slice(0,idx),entry,...to.slice(idx)]);
+          log(`stored turnorder: ${Campaign().get('turnorder')}`);
 
           if(!playerIsGM(msg.playerid)){
             outputEvent('add',entry);
