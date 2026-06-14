@@ -15,8 +15,9 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
   const DEFAULT_NAME = '[Custom Turn]';
 
   const PHASE_NUM = 3;
-  const HIDDEN_TRACKER_NAME = '[ACT Hidden Spell Tracker]';
+  const HIDDEN_TRACKER_TAG = '[ACT Hidden Spell Tracker]';
   const HIDDEN_TRACKER_IMG = 'https://files.d20.io/images/490133006/AXnih6qrMzeScAz3Nnhi2w/thumb.png?1781068992';
+  const ENABLE_HIDDEN_TRACKER_CLEANUP = true;
   const checkInstall = () =>  {
     log(`-=> ${scriptName} v${version} <=-  [${new Date(lastUpdate*1000)}]`);
 
@@ -39,14 +40,60 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
       }
     }
 
-    state[scriptName].hiddenTrackerTokenId = state[scriptName].hiddenTrackerTokenId || null;
+    state[scriptName].hiddenTrackerEntries = state[scriptName].hiddenTrackerEntries || {};
     state.ActionMarkerTokens = Array.isArray(state.ActionMarkerTokens) ? state.ActionMarkerTokens : [];
   };
 
+  const getHiddenTrackerEntries = () => state[scriptName].hiddenTrackerEntries;
+  const getHiddenTrackerEntryState = (tokenId) => getHiddenTrackerEntries()[tokenId] || null;
+  const setHiddenTrackerEntryState = (entry) => {
+    if(entry && entry.id && entry.id !== '-1') {
+      getHiddenTrackerEntries()[entry.id] = {
+        source: entry.source,
+        hidden: entry.hidden,
+        type: entry.type,
+        formula: entry.formula,
+        autoDelete: entry.autoDelete,
+        deleteCondition: entry.deleteCondition,
+        player: entry.player,
+        who: entry.who,
+        counter: entry.counter,
+        numCycles: entry.numCycles,
+        firstFlag: entry.firstFlag,
+        custom: entry.custom
+      };
+    }
+  };
+  const removeHiddenTrackerEntryState = (tokenId) => {
+    delete getHiddenTrackerEntries()[tokenId];
+  };
+  const hydrateHiddenTrackerEntry = (entry) => {
+    if(!entry || !entry.id || entry.id === '-1') {
+      return entry;
+    }
+
+    const hiddenState = getHiddenTrackerEntryState(entry.id);
+    if(!hiddenState) {
+      return entry;
+    }
+
+    const token = getObj('graphic', entry.id);
+    return {
+      ...entry,
+      ...hiddenState,
+      custom: (token && token.get('name')) || hiddenState.custom || entry.custom,
+      _pageid: entry._pageid || (token && token.get('_pageid'))
+    };
+  };
+  const normalizeTurnArray = (turnOrder) => turnOrder.map(hydrateHiddenTrackerEntry);
+
   /* eslint-disable no-unused-vars */
-  const getTurnArray = () => ( '' === Campaign().get('turnorder') ? [] : JSON.parse(Campaign().get('turnorder')));
-  const getTurnArrayFromPrev = (prev) => ( '' === prev.turnorder ? [] : JSON.parse(prev.turnorder));
-  const setTurnArray = (ta) => Campaign().set({turnorder: JSON.stringify(ta)});
+  const getTurnArray = () => ( '' === Campaign().get('turnorder') ? [] : normalizeTurnArray(JSON.parse(Campaign().get('turnorder'))));
+  const getTurnArrayFromPrev = (prev) => ( '' === prev.turnorder ? [] : normalizeTurnArray(JSON.parse(prev.turnorder)));
+  const setTurnArray = (ta) => {
+    ta.filter(isHiddenACTEntry).forEach(setHiddenTrackerEntryState);
+    Campaign().set({turnorder: JSON.stringify(ta)});
+  };
   const addTokenTurn = (id, pr) => setTurnArray([...getTurnArray(), {id,pr}]);
   const addCustomTurn = (custom, pr) => setTurnArray([...getTurnArray(), {id:"-1",custom,pr}]);
   const removeTokenTurn = (tid) => setTurnArray(getTurnArray().filter( (to) => to.id !== tid));
@@ -62,48 +109,26 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
 
   const isACTEntry = (entry) => entry && entry.source === scriptName;
   const isPlainCustomEntry = (entry) => isACTEntry(entry) && entry.type === undefined;
-  const isHiddenACTEntry = (entry) => isACTEntry(entry) && entry.hidden === true;
+  const isHiddenTrackerToken = (token) => token && token.get('bar1_value') === scriptName && token.get('bar1_max') === 'hidden-tracker';
+  const isHiddenTrackerEntry = (entry) => {
+    if(!entry || !entry.id || entry.id === '-1') {
+      return false;
+    }
+
+    if(getHiddenTrackerEntryState(entry.id)) {
+      return true;
+    }
+
+    const token = getObj('graphic', entry.id);
+    return isHiddenTrackerToken(token);
+  };
+  const isHiddenACTEntry = (entry) => isHiddenTrackerEntry(entry) || (isACTEntry(entry) && entry.hidden === true);
 
   const getInitiativePageId = () => Campaign().get('playerpageid');
 
-  const getStoredHiddenTrackerToken = () => {
-    const tokenId = state[scriptName].hiddenTrackerTokenId;
-    if(!tokenId) {
-      return null;
-    }
-
-    const token = getObj('graphic', tokenId);
-    if(!token) {
-      state[scriptName].hiddenTrackerTokenId = null;
-    }
-    return token;
-  };
-
-  const findHiddenTrackerToken = (pageId) => findObjs({
-    _type: 'graphic',
-    _pageid: pageId,
-    layer: 'gmlayer',
-    name: HIDDEN_TRACKER_NAME
-  })[0] || null;
-
-  // Hidden turns all point at one GM-layer token so the tracker entry is attached to an object players cannot see.
-  const getOrCreateHiddenTrackerToken = () => {
-    const storedToken = getStoredHiddenTrackerToken();
-    if(storedToken) {
-      return storedToken;
-    }
-
+  // Hidden turns use one dedicated GM-layer token per entry so Roll20 displays the intended spell name.
+  const createHiddenTrackerToken = (name) => {
     const pageId = getInitiativePageId();
-
-    log(`initiativepage: ${Campaign().get('initiativepage')}`);
-    log(`playerpageid: ${Campaign().get('playerpageid')}`);
-    log(`resolved pageId: ${pageId}`);
-
-    const existingToken = findHiddenTrackerToken(pageId);
-    if(existingToken) {
-      state[scriptName].hiddenTrackerTokenId = existingToken.id;
-      return existingToken;
-    }
 
     const page = getObj('page', pageId);
     if(!page) {
@@ -114,12 +139,14 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
     const token = createObj('graphic', {
       _pageid: pageId,
       imgsrc: HIDDEN_TRACKER_IMG,
-      name: HIDDEN_TRACKER_NAME,
+      name: name,
       layer: 'gmlayer',
       left: (page.get('width') * 70) - 35,
       top: (page.get('height') * 70) - 35,
       width: 70,
       height: 70,
+      bar1_value: scriptName,
+      bar1_max: 'hidden-tracker',
       showname: false,
       showplayers_name: false,
       showplayers_bar1: false,
@@ -133,7 +160,6 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
     });
 
     if(token) {
-      state[scriptName].hiddenTrackerTokenId = token.id;
       return token;
     }
 
@@ -141,20 +167,36 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
     return null;
   };
 
-  const removeHiddenTrackerToken = () => {
-    const token = getStoredHiddenTrackerToken();
+  const removeHiddenTrackerToken = (tokenId) => {
+    const token = getObj('graphic', tokenId);
     if(token) {
       token.remove();
     }
-    state[scriptName].hiddenTrackerTokenId = null;
+    removeHiddenTrackerEntryState(tokenId);
   };
 
-  // Delete the GM-layer tracker token once no hidden AddCustomTurn entries remain in the tracker.
+  const getHiddenTrackerTokens = () => findObjs({
+    _type: 'graphic',
+    layer: 'gmlayer'
+  }).filter(isHiddenTrackerToken);
+
+  // Delete hidden GM-layer helper tokens once they are no longer referenced by the tracker.
   const cleanupHiddenTrackerToken = (turnOrder = getTurnArray()) => {
-    if(turnOrder.some(isHiddenACTEntry)) {
+    if(!ENABLE_HIDDEN_TRACKER_CLEANUP) {
       return;
     }
-    removeHiddenTrackerToken();
+
+    const activeHiddenTokenIds = turnOrder
+      .filter(isHiddenACTEntry)
+      .map((entry) => entry.id);
+
+    getHiddenTrackerTokens()
+      .filter((token) => !activeHiddenTokenIds.includes(token.id))
+      .forEach((token) => removeHiddenTrackerToken(token.id));
+
+    Object.keys(getHiddenTrackerEntries())
+      .filter((tokenId) => !activeHiddenTokenIds.includes(tokenId))
+      .forEach(removeHiddenTrackerEntryState);
   };
 
   // Use Roll20's inline roll engine so formulas can stay general instead of being limited to hard-coded increments.
@@ -687,19 +729,18 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
 
         if(DEFAULT_NAME !== entry.custom){
           if(entry.hidden) {
-            const hiddenTrackerToken = getOrCreateHiddenTrackerToken();
+            const hiddenTrackerToken = createHiddenTrackerToken(entry.custom);
             if(!hiddenTrackerToken) {
               sendChat('ACT', `/w gm ${scriptName} could not create the hidden tracker token. Hidden turn was not added.`);
               return;
             }
             entry.id = hiddenTrackerToken.id;
+            entry._pageid = hiddenTrackerToken.get('_pageid');
+            setHiddenTrackerEntryState(entry);
           }
 
           let to=getTurnArray();
-          log(JSON.stringify(entry));
-          log(JSON.stringify([...to.slice(0,idx),entry,...to.slice(idx)]));
           setTurnArray([...to.slice(0,idx),entry,...to.slice(idx)]);
-          log(`stored turnorder: ${Campaign().get('turnorder')}`);
 
           if(!playerIsGM(msg.playerid)){
             outputEvent('add',entry);
