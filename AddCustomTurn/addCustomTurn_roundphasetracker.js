@@ -364,6 +364,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           return;
         }
 
+        // On first pass, bind this spell to the current phase so it only ticks again after a full phase cycle.
         if(!Number.isInteger(to[0].phaseTarget)) {
           to[0].phaseTarget = currentPhase;
           to[0].phaseArmed = false;
@@ -372,6 +373,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           return;
         }
 
+        // Seeing a different phase arms the spell; it will tick when the tracker returns to its bound phase.
         if(currentPhase !== to[0].phaseTarget) {
           to[0].phaseArmed = true;
           setTurnArray(to);
@@ -385,6 +387,7 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           return;
         }
 
+        // Back on the bound phase after being armed, so consume one duration step and disarm until the next cycle.
         to[0].phaseArmed = false;
         applyFormulaToEntry(to[0], (updatedEntry) => {
           if(parseInt(updatedEntry.pr, 10) <= 0){
