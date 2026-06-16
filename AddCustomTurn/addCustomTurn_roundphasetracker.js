@@ -60,6 +60,8 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
         counter: entry.counter,
         numCycles: entry.numCycles,
         firstFlag: entry.firstFlag,
+        phaseTarget: entry.phaseTarget,
+        phaseArmed: entry.phaseArmed,
         custom: entry.custom
       };
     }
@@ -125,6 +127,10 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
   const isHiddenACTEntry = (entry) => isHiddenTrackerEntry(entry) || (isACTEntry(entry) && entry.hidden === true);
 
   const getInitiativePageId = () => Campaign().get('playerpageid');
+  const getCurrentPhaseValue = (turnOrder = getTurnArray()) => {
+    const phaseEntry = turnOrder.find((entry) => entry.type === 'phase');
+    return phaseEntry ? parseInt(phaseEntry.pr, 10) : null;
+  };
 
   // Hidden turns use one dedicated GM-layer token per entry so Roll20 displays the intended spell name.
   const createHiddenTrackerToken = (name) => {
@@ -350,35 +356,55 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
     // Count down spell trackers once per full round and remove them when they expire.
     if(to.length && to[0].type === "spell") {
       if (to.some(entry => entry.type === "phase")) { // If the phase tracker is present, use it to count rounds.
-        if(to[0].counter % PHASE_NUM == 0){
-            applyFormulaToEntry(to[0], (updatedEntry) => {
-              if(parseInt(updatedEntry.pr, 10) <= 0){
-                const expiredEntry = updatedEntry;
-                outputEvent('delete',expiredEntry);
-                sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${expiredEntry.custom}</b> expired and was removed.</div></div>`);
-                to = to.slice(1);
-                setTurnArray(to);
-                cleanupHiddenTrackerToken(to);
-                return;
-              }
-              setTurnArray(to);
-              cleanupHiddenTrackerToken(to);
-            });
+        const currentPhase = getCurrentPhaseValue(to);
+
+        if(null === currentPhase) {
+          setTurnArray(to);
+          cleanupHiddenTrackerToken(to);
+          return;
+        }
+
+        if(!Number.isInteger(to[0].phaseTarget)) {
+          to[0].phaseTarget = currentPhase;
+          to[0].phaseArmed = false;
+          setTurnArray(to);
+          cleanupHiddenTrackerToken(to);
+          return;
+        }
+
+        if(currentPhase !== to[0].phaseTarget) {
+          to[0].phaseArmed = true;
+          setTurnArray(to);
+          cleanupHiddenTrackerToken(to);
+          return;
+        }
+
+        if(!to[0].phaseArmed) {
+          setTurnArray(to);
+          cleanupHiddenTrackerToken(to);
+          return;
+        }
+
+        to[0].phaseArmed = false;
+        applyFormulaToEntry(to[0], (updatedEntry) => {
+          if(parseInt(updatedEntry.pr, 10) <= 0){
+            const expiredEntry = updatedEntry;
+            outputEvent('delete',expiredEntry);
+            to = to.slice(1);
+            setTurnArray(to);
+            cleanupHiddenTrackerToken(to);
             return;
-        }
-        if (!to[0].firstFlag) {
-            to[0].counter++
-        }
-        else {
-            to[0].firstFlag = false;
-        }
+          }
+          setTurnArray(to);
+          cleanupHiddenTrackerToken(to);
+        });
+        return;
       }
       else { // If the phase tracker isn't present, just count turns.
         applyFormulaToEntry(to[0], (updatedEntry) => {
           if(parseInt(updatedEntry.pr, 10) <= 0){
             const expiredEntry = updatedEntry;
             outputEvent('delete',expiredEntry);
-            sendChat('',`<div style="padding:1px 3px;border: 1px solid #8B4513;background: #eeffee; color: #8B4513; font-size: 80%;"><div style="background-color: #ffeeee;"><b>${expiredEntry.custom}</b> expired and was removed.</div></div>`);
             to = to.slice(1);
             setTurnArray(to);
             cleanupHiddenTrackerToken(to);
@@ -713,8 +739,9 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
                 } else if(!hasPositionalFormula) {
                   entry.formula = '-1';
                 }
-                entry.counter = 1;
-                entry.firstFlag = true;
+                entry.counter = 0;
+                entry.phaseTarget = null;
+                entry.phaseArmed = false;
                 break;
                 
             default: {
@@ -740,6 +767,10 @@ const AddCustomTurn = (() => { // eslint-disable-line no-unused-vars
           }
 
           let to=getTurnArray();
+          if(entry.type === 'spell') {
+            entry.phaseTarget = getCurrentPhaseValue(to);
+            entry.phaseArmed = false;
+          }
           setTurnArray([...to.slice(0,idx),entry,...to.slice(idx)]);
 
           if(!playerIsGM(msg.playerid)){
